@@ -503,9 +503,18 @@ Panel {
   function shortcutHintText() {
     return "e collapse  ·  / search  ·  "
       + (powerEstimatesEnabled ? "c/m/w/p/t/n" : "c/m/p/t/n")
-      + " sort  ·  r refresh  ·  s settings  ·  j/k select  ·  x end app"
+      + " sort  ·  r refresh  ·  s settings  ·  j/k select  ·  click/x close"
       + ((canCycleDisks || canCycleStorage) ? "  ·  d/v cycle drives" : "")
       + "  ·  ? hide"
+  }
+
+  function requestCloseProcess(process, index) {
+    if (!process) return
+    if (index >= 0) {
+      cursorActive = true
+      selectProcess(index)
+    }
+    processActions.request(process)
   }
 
   function selectProcessFromPointer(index, item, mouse) {
@@ -584,7 +593,7 @@ Panel {
   ProcessActionController {
     id: processActions
     active: root.opened
-    enabled: root.expanded && !root.settingsOpen
+    enabled: !root.settingsOpen
     onConfirmationRequested: processConfirm.selectedIndex = 0
     onFocusRequested: if (root.opened) keyCatcher.forceActiveFocus()
     onRefreshRequested: activity.refreshProcessCycle()
@@ -618,9 +627,11 @@ Panel {
     contentWidth: panel.fittedContentWidth(root.settingsOpen
       ? Style.space(600)
       : (root.expanded ? Style.space(780) : Style.space(380)))
+    // Size the card to the loaded page. Keyboard hints and process status
+    // live in that page, so showing them grows the window instead of
+    // painting below the border.
     contentHeight: panel.fittedContentHeight(
-      contentLoader.item ? contentLoader.item.implicitHeight : Style.space(320),
-      root.expanded || root.settingsOpen ? Style.space(720) : Style.space(560))
+      contentLoader.item ? contentLoader.item.implicitHeight : Style.space(320))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -698,12 +709,9 @@ Panel {
         opened: processActions.confirmationOpen
         z: 20
         message: processActions.pendingAction
-          ? "End " + processActions.pendingAction.name + "?\nPID " + processActions.pendingAction.pid
-            + " · " + processActions.pendingAction.user
-            + "\nCloses its verified parent app and windows."
-            + "\nForce-closes it after 3 seconds if needed."
+          ? "Do you want to close " + processActions.pendingAction.name + "?"
           : ""
-        confirmText: "End app"
+        confirmText: "Close"
         background: Color.popups.background
         foreground: root.foreground
         selectedText: root.accent
@@ -826,9 +834,10 @@ Panel {
 
       Text {
         width: parent.width
-        visible: root.hintsVisible
-        text: "e details  ·  s settings  ·  ? hide"
-        color: root.dim
+        visible: processActions.status !== "" || root.hintsVisible
+        text: processActions.status || "e details  ·  s settings  ·  ? hide"
+        textFormat: Text.PlainText
+        color: processActions.failed ? root.urgent : root.dim
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.caption
         horizontalAlignment: Text.AlignHCenter
@@ -1019,8 +1028,6 @@ Panel {
     id: expandedContent
 
     Column {
-      id: expandedPage
-
       width: contentLoader.width
       spacing: Style.spacing.panelGap
 
@@ -1171,18 +1178,8 @@ Panel {
         id: processListHost
 
         width: parent.width
-        height: Math.max(Style.space(120), Style.space(300) - processFooterReserve)
+        height: Style.space(300)
         clip: true
-
-        // Expanded height is capped; shrink the list so the footer stays in-card.
-        readonly property int processFooterReserve: {
-          var extra = 0
-          if (endProcessHost.visible)
-            extra += Math.max(0, endProcessHost.implicitHeight) + expandedPage.spacing
-          if (expandedHint.visible)
-            extra += Math.max(0, expandedHint.implicitHeight) + expandedPage.spacing
-          return extra
-        }
 
         ListView {
           id: processList
@@ -1227,41 +1224,6 @@ Panel {
           color: root.dim
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.body
-        }
-      }
-
-      Item {
-        id: endProcessHost
-
-        width: parent.width
-        implicitHeight: endProcessButton.visible ? endProcessButton.implicitHeight : 0
-        height: implicitHeight
-        visible: endProcessButton.visible
-
-        Button {
-          id: endProcessButton
-          readonly property string blockReason: processActions.blockReason(root.selectedProcess)
-          readonly property bool targetAllowed: blockReason === ""
-
-          visible: root.cursorActive && root.selectedProcess !== null
-          enabled: !processActions.running && targetAllowed
-          opacity: targetAllowed || processActions.running ? 1 : 0.48
-          anchors.right: parent.right
-          iconText: "\uf2ed"
-          text: processActions.running
-            ? "Ending…"
-            : (targetAllowed ? "End app" : "Unavailable")
-          tooltipText: targetAllowed
-            ? "Close the selected app; force-close after 3 seconds if needed"
-            : blockReason
-          foreground: targetAllowed ? root.urgent : root.dim
-          accent: targetAllowed ? root.urgent : root.dim
-          fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-          fontSize: Style.font.caption
-          horizontalPadding: Style.spacing.md
-          verticalPadding: Style.spacing.xs
-          bordered: true
-          onClicked: processActions.request(root.selectedProcess)
         }
       }
 
@@ -1819,16 +1781,12 @@ Panel {
     MouseArea {
       anchors.fill: parent
       hoverEnabled: !compact
-      cursorShape: compact ? Qt.ArrowCursor : Qt.PointingHandCursor
+      cursorShape: Qt.PointingHandCursor
+      acceptedButtons: Qt.LeftButton
       onPositionChanged: function(mouse) {
         if (!compact) root.selectProcessFromPointer(parent.rowIndex, parent, mouse)
       }
-      onClicked: {
-        if (!compact) {
-          root.cursorActive = true
-          root.selectProcess(parent.rowIndex)
-        }
-      }
+      onClicked: root.requestCloseProcess(parent.processData, compact ? -1 : parent.rowIndex)
     }
   }
 

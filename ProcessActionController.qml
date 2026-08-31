@@ -39,7 +39,21 @@ Item {
   }
 
   function request(process) {
-    if (!active || !enabled || blockReason(process) !== "" || running) return false
+    if (!active || !enabled || running) return false
+
+    var reason = blockReason(process)
+    if (reason !== "") {
+      _pendingAction = null
+      _failed = true
+      _status = reason
+      clearStatus.restart()
+      focusRequested()
+      return false
+    }
+
+    _failed = false
+    _status = ""
+    clearStatus.stop()
     _pendingAction = {
       pid: Number(process.pid),
       startTicks: Number(process.startTicks),

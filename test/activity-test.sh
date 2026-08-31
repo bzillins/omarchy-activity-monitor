@@ -789,6 +789,17 @@ fi
 grep -Fq 'property bool hintsVisible: false' "$panel_file" &&
   grep -Fq 'function shortcutHintText()' "$panel_file" ||
   fail "activity keyboard hints are not opt-in"
+grep -Fq 'contentHeight: panel.fittedContentHeight(' "$panel_file" &&
+  grep -Fq 'contentLoader.item.implicitHeight' "$panel_file" ||
+  fail "activity panel does not size the window to its content"
+if grep -Fq 'processFooterReserve' "$panel_file"; then
+  fail "activity still shrinks the process list to make room for keyboard hints"
+fi
+if grep -Fq 'Style.space(720)' "$panel_file" || grep -Fq 'Style.space(560))' "$panel_file"; then
+  fail "activity still caps the window below the height of keyboard hints"
+fi
+grep -Fq 'height: Style.space(300)' "$panel_file" ||
+  fail "activity expanded process list is not a stable height while hints open"
 if grep -Fq 'Preview CPU layouts' "$panel_file" || grep -Fq 'layoutPreviewContent' "$panel_file"; then
   fail "activity still ships the CPU layout preview in the production panel"
 fi
@@ -828,18 +839,26 @@ grep -Fq 'if (!root.settingsOpen && !processActions.confirmationOpen && root.cur
   fail "activity process shortcut can act without an explicit selection"
 grep -Fq 'ProcessActionController {' "$panel_file" &&
   grep -Fq 'active: root.opened' "$panel_file" &&
-  grep -Fq 'enabled: root.expanded && !root.settingsOpen' "$panel_file" ||
+  grep -Fq 'enabled: !root.settingsOpen' "$panel_file" ||
   fail "activity panel does not delegate guarded app actions to their controller"
+grep -Fq 'function requestCloseProcess(process, index)' "$panel_file" &&
+  grep -Fq 'onClicked: root.requestCloseProcess(parent.processData, compact ? -1 : parent.rowIndex)' "$panel_file" ||
+  fail "activity process rows do not confirm close on left click"
+if grep -Fq 'id: endProcessButton' "$panel_file" || grep -Fq 'id: endProcessHost' "$panel_file"; then
+  fail "activity still shows a separate End app button"
+fi
 grep -Fq 'Model.processIdentityKey' "$panel_file" ||
   fail "activity process selection is not tied to its sampled start time"
 grep -Fq 'signalHelperPath,' "$action_controller_file" ||
   fail "activity panel does not use the guarded process signal helper"
 grep -Fq 'action: "APP_TERM"' "$action_controller_file" ||
   fail "activity panel does not resolve worker processes to their parent app"
-grep -Fq 'confirmText: "End app"' "$panel_file" ||
-  fail "activity panel does not describe the app-wide process action"
-grep -Fq 'Force-closes it after 3 seconds if needed.' "$panel_file" ||
-  fail "activity panel does not disclose force-close escalation"
+grep -Fq 'confirmText: "Close"' "$panel_file" ||
+  fail "activity panel does not confirm closing the selected process"
+grep -Fq 'Do you want to close ' "$panel_file" ||
+  fail "activity panel does not ask a simple close confirmation"
+grep -Fq '_status = reason' "$action_controller_file" ||
+  fail "activity panel does not explain why a process cannot be closed"
 grep -Fq '"hyprland"' "$ROOT/Model.js" ||
   fail "activity panel does not protect the desktop compositor"
 grep -Fq '"systemd-executo"' "$ROOT/Model.js" ||

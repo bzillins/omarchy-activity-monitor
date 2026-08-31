@@ -34,7 +34,7 @@ omarchy plugin remove stappmus.activity-monitor
 - Click the bar icon to open. `e` expands, Esc collapses.
 - `/` search processes. `j` / `k` move. Click a column header to sort.
 - `s` opens settings — update speed, graph history, °C/°F, and whether to estimate process watts.
-- `x` can close an app you selected, after a confirmation.
+- Left-click a process to close it. A popup asks first; `x` does the same for the selected row.
 
 Settings are saved with your bar layout and apply immediately.
 
