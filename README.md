@@ -40,7 +40,7 @@ Settings are saved with your bar layout and apply immediately.
 
 ## A few honest details
 
-Used memory follows Linux available-memory accounting, with cache shown separately because the kernel can reclaim it. GPU memory is what the driver actually reports — shared for integrated, VRAM for discrete. A power-gated GPU clock shows as `IDLE`.
+Used memory follows Linux available-memory accounting, with cache shown separately because the kernel can reclaim it. GPU memory is what the driver actually reports — shared for integrated, VRAM for discrete. NVIDIA telemetry is queried only when PCI runtime power management reports that the GPU is already active; a suspended discrete GPU stays asleep and its live statistics remain unavailable until another application wakes it.
 
 Estimated watts (`~W`) are a share of measured CPU-package energy, not wall power. They only run in the expanded view, and you can turn them off.
 

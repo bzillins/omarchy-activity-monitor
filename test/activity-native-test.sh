@@ -15,7 +15,7 @@ file "$ROOT/activity-sampler" | grep -Fq 'ELF 64-bit' ||
   fail "activity sampler is not a native 64-bit executable"
 [[ $(stat -c %s "$ROOT/activity-sampler") -lt 524288 ]] ||
   fail "activity sampler binary exceeds its 512 KiB size budget"
-[[ $("$ROOT/activity-sampler" --version) == 'activity-sampler 2.1.1' ]] ||
+[[ $("$ROOT/activity-sampler" --version) == 'activity-sampler 2.1.2' ]] ||
   fail "activity sampler binary does not match its source release"
 readelf -lW "$ROOT/activity-sampler" | grep -Fq 'GNU_RELRO' ||
   fail "activity sampler is missing RELRO hardening"
@@ -56,6 +56,8 @@ wait "$native_reader_pid"
 pass "activity reader stays below 4 MiB PSS and launches no child collectors"
 
 grep -Fq 'dlopen("libnvidia-ml.so.1"' "$ROOT/activity-sampler.cpp" &&
+  grep -Fq 'nvmlInitWithFlags' "$ROOT/activity-sampler.cpp" &&
+  grep -Fq 'power/runtime_status' "$ROOT/activity-sampler.cpp" &&
   grep -Fq 'next_fd_discovery_' "$ROOT/activity-sampler.cpp" &&
   grep -Fq 'std::unordered_map<pid_t, Metadata> cache_' "$ROOT/activity-sampler.cpp" ||
   fail "activity sampler does not retain its expensive discovery state"
@@ -63,4 +65,4 @@ if grep -Eq 'nvidia-smi|popen[[:space:]]*\(|system[[:space:]]*\(|fork[[:space:]]
     "$ROOT/activity-sampler.cpp"; then
   fail "activity sampler invokes an external collector"
 fi
-pass "activity sampler caches GPU/process discovery and keeps NVML in-process"
+pass "activity sampler caches discovery and gates NVML on runtime power state"

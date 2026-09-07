@@ -512,7 +512,7 @@ grep -Eq '^process[[:space:]]' <<<"$process_snapshot" || fail "activity process 
 pass "activity collector emits the process snapshot contract"
 
 [[ -x $ROOT/activity-sampler ]] || fail "native activity sampler is executable"
-[[ $("$ROOT/activity-sampler" --version) == "activity-sampler 2.1.1" ]] ||
+[[ $("$ROOT/activity-sampler" --version) == "activity-sampler 2.1.2" ]] ||
   fail "native activity sampler reports the release protocol version"
 [[ ! -e $ROOT/activity-process-stats ]] ||
   fail "legacy process helper remains beside the unified native sampler"

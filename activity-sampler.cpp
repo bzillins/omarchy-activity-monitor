@@ -1374,34 +1374,24 @@ class NvidiaProvider {
 public:
   explicit NvidiaProvider(std::string fixture) : fixture_(std::move(fixture)) {}
 
-  ~NvidiaProvider() {
-    if (initialized_ && shutdown_)
-      shutdown_();
-    if (library_)
-      dlclose(library_);
-  }
+  ~NvidiaProvider() { Close(); }
 
-  std::vector<NvidiaReading> Read() {
+  std::vector<NvidiaReading>
+  Read(const std::vector<std::string> &active_device_ids) {
     if (!fixture_.empty())
       return ReadFixture();
+    if (active_device_ids.empty())
+      return {};
     if (!Initialize())
       return {};
 
-    unsigned int count = 0;
-    if (get_count_(&count) != 0)
-      return {};
     std::vector<NvidiaReading> readings;
-    for (unsigned int index = 0; index < count; ++index) {
+    for (const auto &id : active_device_ids) {
       void *device = nullptr;
-      if (get_handle_(index, &device) != 0 || !device)
+      if (get_handle_(id.c_str(), &device) != 0 || !device)
         continue;
       NvidiaReading reading;
-
-      NvmlPciInfo pci{};
-      if (get_pci_(device, &pci) == 0) {
-        reading.id =
-            NormalizeBus(pci.bus_id[0] ? pci.bus_id : pci.bus_id_legacy);
-      }
+      reading.id = NormalizeBus(id);
 
       std::array<char, 128> name{};
       if (get_name_(device, name.data(), name.size()) == 0)
@@ -1424,20 +1414,11 @@ public:
       if (!reading.id.empty())
         readings.push_back(std::move(reading));
     }
+    Close();
     return readings;
   }
 
 private:
-  struct NvmlPciInfo {
-    char bus_id_legacy[16];
-    unsigned int domain;
-    unsigned int bus;
-    unsigned int device;
-    unsigned int pci_device_id;
-    unsigned int pci_subsystem_id;
-    char bus_id[32];
-  };
-
   struct NvmlUtilization {
     unsigned int gpu;
     unsigned int memory;
@@ -1449,11 +1430,9 @@ private:
     unsigned long long used;
   };
 
-  using Init = int (*)();
+  using InitWithFlags = int (*)(unsigned int);
   using Shutdown = int (*)();
-  using GetCount = int (*)(unsigned int *);
-  using GetHandle = int (*)(unsigned int, void **);
-  using GetPci = int (*)(void *, NvmlPciInfo *);
+  using GetHandle = int (*)(const char *, void **);
   using GetName = int (*)(void *, char *, unsigned int);
   using GetUtilization = int (*)(void *, NvmlUtilization *);
   using GetMemory = int (*)(void *, NvmlMemory *);
@@ -1461,12 +1440,9 @@ private:
 
   std::string fixture_;
   void *library_ = nullptr;
-  bool attempted_ = false;
   bool initialized_ = false;
   Shutdown shutdown_ = nullptr;
-  GetCount get_count_ = nullptr;
   GetHandle get_handle_ = nullptr;
-  GetPci get_pci_ = nullptr;
   GetName get_name_ = nullptr;
   GetUtilization get_utilization_ = nullptr;
   GetMemory get_memory_ = nullptr;
@@ -1477,29 +1453,44 @@ private:
   }
 
   bool Initialize() {
-    if (attempted_)
-      return initialized_;
-    attempted_ = true;
+    Close();
     library_ = dlopen("libnvidia-ml.so.1", RTLD_NOW | RTLD_LOCAL);
     if (!library_)
       return false;
 
-    const auto init = Symbol<Init>("nvmlInit_v2");
+    const auto init = Symbol<InitWithFlags>("nvmlInitWithFlags");
     shutdown_ = Symbol<Shutdown>("nvmlShutdown");
-    get_count_ = Symbol<GetCount>("nvmlDeviceGetCount_v2");
-    get_handle_ = Symbol<GetHandle>("nvmlDeviceGetHandleByIndex_v2");
-    get_pci_ = Symbol<GetPci>("nvmlDeviceGetPciInfo_v3");
-    if (!get_pci_)
-      get_pci_ = Symbol<GetPci>("nvmlDeviceGetPciInfo_v2");
+    get_handle_ =
+        Symbol<GetHandle>("nvmlDeviceGetHandleByPciBusId_v2");
     get_name_ = Symbol<GetName>("nvmlDeviceGetName");
     get_utilization_ = Symbol<GetUtilization>("nvmlDeviceGetUtilizationRates");
     get_memory_ = Symbol<GetMemory>("nvmlDeviceGetMemoryInfo");
     get_clock_ = Symbol<GetClock>("nvmlDeviceGetClockInfo");
-    if (!init || !shutdown_ || !get_count_ || !get_handle_ || !get_pci_ ||
-        !get_name_ || !get_utilization_ || !get_memory_ || !get_clock_)
+    if (!init || !shutdown_ || !get_handle_ || !get_name_ ||
+        !get_utilization_ || !get_memory_ || !get_clock_) {
+      Close();
       return false;
-    initialized_ = init() == 0;
+    }
+    constexpr unsigned int kNvmlInitFlagNoAttach = 1U << 1;
+    initialized_ = init(kNvmlInitFlagNoAttach) == 0;
+    if (!initialized_)
+      Close();
     return initialized_;
+  }
+
+  void Close() {
+    if (initialized_ && shutdown_)
+      shutdown_();
+    initialized_ = false;
+    if (library_)
+      dlclose(library_);
+    library_ = nullptr;
+    shutdown_ = nullptr;
+    get_handle_ = nullptr;
+    get_name_ = nullptr;
+    get_utilization_ = nullptr;
+    get_memory_ = nullptr;
+    get_clock_ = nullptr;
   }
 
   static std::string NormalizeBus(std::string bus) {
@@ -1766,6 +1757,12 @@ private:
               ActiveDpmClock(Join(gpu.device_path, "pp_dpm_sclk"));
       }
 
+      // NVIDIA telemetry is collected through NVML only after runtime_status
+      // confirms that the device is already awake. Avoiding even generic
+      // frequency attributes here keeps a suspended dGPU power-gated.
+      if (gpu.vendor_hex == "10de")
+        continue;
+
       if (gpu.frequency_mhz < 0) {
         const auto frequency = MaxFrequency({
             {Join(gpu.device_path, "devfreq/*/cur_freq"), 1000000},
@@ -1780,7 +1777,7 @@ private:
   void ApplyNvidia() {
     if (!nvidia_present_ && paths_.nvidia_fixture.empty())
       return;
-    for (const auto &reading : nvidia_.Read()) {
+    for (const auto &reading : nvidia_.Read(ActiveNvidiaDeviceIds())) {
       auto found =
           std::find_if(adapters_.begin(), adapters_.end(),
                        [&](const auto &gpu) { return gpu.id == reading.id; });
@@ -1807,6 +1804,36 @@ private:
         found->memory_kind = "vram";
       }
     }
+  }
+
+  std::vector<std::string> ActiveNvidiaDeviceIds() const {
+    std::vector<std::string> active;
+    std::unordered_set<std::string> seen;
+    const auto add_if_active = [&](const std::string &id,
+                                   const std::string &device_path) {
+      const auto status = ReadLine(Join(device_path, "power/runtime_status"));
+      if (!status || *status != "active" || !seen.insert(id).second)
+        return;
+      active.push_back(id);
+    };
+
+    for (const auto &gpu : adapters_) {
+      if (gpu.vendor_hex == "10de")
+        add_if_active(gpu.id, gpu.device_path);
+    }
+
+    const std::string pci_root = Join(paths_.sys, "bus/pci/devices");
+    for (const auto &name : DirectoryNames(pci_root)) {
+      const std::string device_path = Join(pci_root, name);
+      if (NormalizeHex(ReadLine(Join(device_path, "vendor")).value_or("")) !=
+              "10de" ||
+          !StartsWith(
+              NormalizeHex(ReadLine(Join(device_path, "class")).value_or("")),
+              "03"))
+        continue;
+      add_if_active(Lowercase(name), device_path);
+    }
+    return active;
   }
 
   void DiscoverFdinfoPaths() {
@@ -2049,7 +2076,7 @@ int Run(int argc, char **argv) {
   else if (mode == "--activity-storage")
     sampler.Collect("storage", std::cout);
   else if (mode == "--version")
-    std::cout << "activity-sampler 2.1.1\n";
+    std::cout << "activity-sampler 2.1.2\n";
   else {
     std::cerr << "Usage: activity-sampler "
                  "[--bar-widget|--activity-reader|--activity-resources|"
